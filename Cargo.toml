@@ -1,0 +1,15 @@
+[package]
+name = "controller"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.97"
+clap = { version = "4.5.31", features = ["derive", "env"] }
+openssh = { version = "0.11.5", features = ["tracing"] }
+pcap-parser = { version = "0.16.0", features = ["data"] }
+serde = { version = "1.0.219", features = ["derive"] }
+tokio = { version = "1.44.0", features = ["full"] }
+toml = "0.8.20"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
