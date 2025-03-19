@@ -5,10 +5,11 @@ pub mod hosts;
 pub mod monitor;
 pub mod package;
 
-use std::process::ExitCode;
+use std::{process::ExitCode, time::Duration};
 
 use clap::Parser;
 use hosts::HostsConfig;
+use monitor::MonitorConfig;
 use tracing::{debug, error};
 use tracing_subscriber::EnvFilter;
 
@@ -52,7 +53,7 @@ async fn main() -> ExitCode {
         }
     };
 
-    let _hosts = match hosts_config.connect().await {
+    let hosts = match hosts_config.connect().await {
         Ok(v) => v,
         Err(err) => {
             error!("Could not initialize ssh connections: {err:?}");
@@ -60,16 +61,24 @@ async fn main() -> ExitCode {
         }
     };
 
-    // hosts
-    //     .get("local")
-    //     .unwrap()
-    //     .capture(&capture::CaptureConfig {
-    //         interface: "wlp9s0".to_string(),
-    //         stop_condition: capture::StopCondition::Duration(Duration::from_secs(5)),
-    //         output_path: Some(PathBuf::from_str("./capture.pcapng").unwrap()),
-    //     })
-    //     .await
-    //     .unwrap();
+    let monitor = MonitorConfig {
+        ssid: "OpenWrt".to_string(),
+        bssid: "10:7c:61:df:7a:d2".to_string(),
+        monitors: vec![
+            "nuc1".to_string(),
+            "nuc5".to_string(),
+            "nuc6".to_string(),
+            "nuc7".to_string(),
+        ],
+        duration: Duration::from_secs(1),
+        output_path: Some("./results".into()),
+        set_aids: true,
+    }
+    .start(&hosts)
+    .await
+    .expect("failed to start capture");
+
+    monitor.wait().await.unwrap();
 
     ExitCode::SUCCESS
 }

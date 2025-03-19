@@ -2,7 +2,8 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::Context;
 use openssh::Stdio;
-use tokio::{io::AsyncReadExt, task::JoinSet};
+use tokio::{fs, io::AsyncReadExt, task::JoinSet};
+use tracing::{debug, info};
 
 use crate::{
     capture::{Capture, CaptureConfig, StopCondition},
@@ -29,6 +30,12 @@ pub struct MonitorConfig {
 impl MonitorConfig {
     /// Start monitoring traffic.
     pub async fn start(self: Self, hosts: &Hosts) -> anyhow::Result<Monitor> {
+        if let Some(output_path) = &self.output_path {
+            fs::create_dir(output_path)
+                .await
+                .context("could not create output path")?;
+        }
+
         let monitor_hosts = hosts
             .get_many(self.monitors.iter().map(|v| v.as_str()))?
             .into_iter()
@@ -38,13 +45,17 @@ impl MonitorConfig {
         // Connect the non monitor hosts and determine their association ID.
         let connected_hosts = hosts
             .all_except(self.monitors.iter().map(|v| v.as_str()))
+            .filter(|h| h.do_monitor)
             .cloned();
 
         if self.set_aids {
-            // Set up the actual capture that will find the association ids.
-            let mut aid_capture = monitor_hosts
+            let h = monitor_hosts
                 .get(0)
-                .context("monitoring requires at least one monitor host")?
+                .context("monitoring requires at least one monitor host")?;
+            debug!(host = h.id, "Listening for AIDs");
+
+            // Set up the actual capture that will find the association ids.
+            let mut aid_capture = h
                 .session
                 .command("sudo")
                 .args([
@@ -60,7 +71,7 @@ impl MonitorConfig {
                     // different BSS.
                     "-Y",
                     &format!(
-                        "wlan.fc.type_subtype == 0x0001 && wlan.bssid == {}",
+                        "wlan.fc.type_subtype == 0x0001 && wlan.bssid == {:?}",
                         self.bssid
                     ),
                 ])
@@ -104,13 +115,17 @@ impl MonitorConfig {
                 .context("could not parse association ID")?;
 
             for (aid, host) in aids.iter().zip(monitor_hosts.iter()) {
+                debug!(
+                    host = host.id,
+                    aid, "Changing association ID on monitor host"
+                );
                 match host.wifi_driver.as_ref().map(|s| s.as_str()) {
                     Some("iwlwifi") => iwlwifi::set_association_id(&host, *aid, &self.bssid)
                         .await
                         .context("failed to set AID")?,
                     other => {
                         anyhow::bail!(
-                            "Cannot set association ID for unsupported driver ({}) on host {}",
+                            "cannot set association ID for unsupported driver ({}) on host {}",
                             other.unwrap_or("unknown"),
                             host.id,
                         );
@@ -121,6 +136,10 @@ impl MonitorConfig {
 
         // Start the capture on all the monitor hosts.
         let mut captures = JoinSet::new();
+        info!(
+            "Starting monitor with {} monitor hosts",
+            monitor_hosts.len()
+        );
         for monitor_host in monitor_hosts {
             let output_path = self.output_path.clone();
             captures.spawn(async move {
@@ -146,14 +165,18 @@ pub struct Monitor {
 impl Monitor {
     /// Waits for all the captures to complete and returns their results.
     pub async fn wait(self: Self) -> anyhow::Result<Vec<(HostId, Capture)>> {
-        self.captures
-            .join_all()
-            .await
-            .into_iter()
-            .try_fold(Vec::new(), |mut acc, item| {
-                acc.push(item.context("capture returned an error")?);
-                Ok(acc)
-            })
+        let result =
+            self.captures
+                .join_all()
+                .await
+                .into_iter()
+                .try_fold(Vec::new(), |mut acc, item| {
+                    acc.push(item.context("capture returned an error")?);
+                    anyhow::Result::<_>::Ok(acc)
+                })?;
+
+        info!("Monitor complete");
+        Ok(result)
     }
 
     /// Immediately stops the captures, throwing away the results.

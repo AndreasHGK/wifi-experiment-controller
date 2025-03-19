@@ -65,7 +65,8 @@ impl Host {
 
         let mut capture = self
             .session
-            .command("tshark")
+            .command("sudo")
+            .arg("tshark")
             .arg("-F")
             .arg("pcapng")
             .arg("--interface")
@@ -76,7 +77,7 @@ impl Host {
             .arg("-") // Output the pcapng capture to the stdout.
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .await
             .context("failed to start remote wireshark capture")?;
@@ -107,7 +108,7 @@ impl Host {
                 host = self.id,
                 "Remote capture failed with status code {} and stderr output: \"{}\"",
                 output.status,
-                String::from_utf8_lossy(&output.stdout)
+                String::from_utf8_lossy(&output.stderr)
             );
             anyhow::bail!("remote capture failed with status {}", output.status);
         }

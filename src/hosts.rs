@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Context;
-use openssh::{KnownHosts, Session};
+use openssh::{KnownHosts, Session, SessionBuilder};
 use serde::Deserialize;
 use tokio::{fs, task::JoinSet};
 use tracing::{debug, info};
@@ -22,15 +22,25 @@ pub struct HostsConfig {
 
 /// Configuration for a single host.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "kebab-case")]
 pub struct HostConfig {
     /// Identifier for the host in experiments. Should be unique across hosts.
     ///
     /// Can be different from the hostname of the system.
     pub id: HostId,
     /// The SSH url to use to connect to the host.
+    ///
+    /// If relays are set, this needs to be the url accessible from the last relay set.
     pub url: String,
+    /// Relay SSH host(s) to jump through to connect to the host. The first entry is the first relay
+    /// that will be connected to.
+    #[serde(default)]
+    pub relays: Vec<String>,
     /// The wireless driver used for the Wi-Fi interface in the device.
     pub wifi_driver: Option<String>,
+    /// If true, exclude this host for monitoring.
+    #[serde(default)]
+    pub exclude_monitor: bool,
 }
 
 impl HostsConfig {
@@ -95,7 +105,12 @@ impl HostsConfig {
 impl HostConfig {
     /// Try to connect to the host with the provided configuration.
     async fn connect(&self) -> anyhow::Result<Host> {
-        let session = Session::connect(&self.url, KnownHosts::Accept)
+        let mut builder = SessionBuilder::default();
+        builder.known_hosts_check(KnownHosts::Accept);
+        builder.jump_hosts(self.relays.iter());
+
+        let session = builder
+            .connect(&self.url)
             .await
             .context(format!("error while opening session to `{}`", &self.id))?;
         debug!(id = &self.id, "Opened ssh session");
@@ -126,6 +141,7 @@ impl HostConfig {
             session,
             os_info,
             wifi_driver: self.wifi_driver.clone(),
+            do_monitor: !self.exclude_monitor,
         })
     }
 }
@@ -188,6 +204,8 @@ pub struct Host {
     pub os_info: HostOs,
     /// The driver user in the main Wi-Fi interface for the device.
     pub wifi_driver: Option<String>,
+    /// If false, this host should not be monitored.
+    pub do_monitor: bool,
 }
 
 /// Information about the host's operating system. Can be useful to known for instance which package
