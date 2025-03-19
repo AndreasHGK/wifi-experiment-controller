@@ -29,6 +29,8 @@ pub struct HostConfig {
     pub id: HostId,
     /// The SSH url to use to connect to the host.
     pub url: String,
+    /// The wireless driver used for the Wi-Fi interface in the device.
+    pub wifi_driver: Option<String>,
 }
 
 impl HostsConfig {
@@ -123,6 +125,7 @@ impl HostConfig {
             id: self.id.clone(),
             session,
             os_info,
+            wifi_driver: self.wifi_driver.clone(),
         })
     }
 }
@@ -183,6 +186,8 @@ pub struct Host {
     /// An SSH session to the remote host.
     pub session: openssh::Session,
     pub os_info: HostOs,
+    /// The driver user in the main Wi-Fi interface for the device.
+    pub wifi_driver: Option<String>,
 }
 
 /// Information about the host's operating system. Can be useful to known for instance which package

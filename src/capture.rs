@@ -1,7 +1,5 @@
-pub mod utils;
-
 use std::{
-    io::{BufRead, Cursor, Read},
+    io::{Cursor, Read},
     path::PathBuf,
     time::Duration,
 };

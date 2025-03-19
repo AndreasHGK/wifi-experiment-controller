@@ -8,7 +8,7 @@ use crate::hosts::Host;
 ///
 /// * `aid` - The association ID to monitor.
 /// * `bssid` - The BSSID as a string representing a mac address.
-pub async fn set_association_id(host: &Host, aid: u16, bssid: String) -> anyhow::Result<()> {
+pub async fn set_association_id(host: &Host, aid: u16, bssid: &str) -> anyhow::Result<()> {
     let status = host
         .session
         .command("sudo")

@@ -5,7 +5,7 @@ pub mod hosts;
 pub mod monitor;
 pub mod package;
 
-use std::{path::PathBuf, process::ExitCode, str::FromStr, time::Duration};
+use std::process::ExitCode;
 
 use clap::Parser;
 use hosts::HostsConfig;
@@ -52,7 +52,7 @@ async fn main() -> ExitCode {
         }
     };
 
-    let hosts = match hosts_config.connect().await {
+    let _hosts = match hosts_config.connect().await {
         Ok(v) => v,
         Err(err) => {
             error!("Could not initialize ssh connections: {err:?}");

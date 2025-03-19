@@ -4,6 +4,7 @@
 pkgs.mkShell {
   packages = with pkgs; [
     cargo
+    libpcap
     openssl
     pkg-config
     rustc
