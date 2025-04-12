@@ -16,7 +16,10 @@ pub struct MonitorConfig {
     pub ssid: String,
     /// Thee BSS ID of the network to monitor.
     pub bssid: String,
+    /// The hosts that will perform the monitoring.
     pub monitors: Vec<HostId>,
+    /// The hosts to monitor.
+    pub targets: Vec<HostId>,
     pub duration: Duration,
     /// Where to write the captures to.
     pub output_path: Option<PathBuf>,
@@ -31,7 +34,7 @@ impl MonitorConfig {
     /// Start monitoring traffic.
     pub async fn start(self: Self, hosts: &Hosts) -> anyhow::Result<Monitor> {
         if let Some(output_path) = &self.output_path {
-            fs::create_dir(output_path)
+            fs::create_dir_all(output_path)
                 .await
                 .context("could not create output path")?;
         }
@@ -42,11 +45,12 @@ impl MonitorConfig {
             .cloned()
             .collect::<Vec<_>>();
 
-        // Connect the non monitor hosts and determine their association ID.
+        // Connect the target hosts and determine their association ID.
         let connected_hosts = hosts
-            .all_except(self.monitors.iter().map(|v| v.as_str()))
-            .filter(|h| h.do_monitor)
-            .cloned();
+            .get_many(self.targets.iter().map(|v| v.as_str()))?
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
 
         if self.set_aids {
             let h = monitor_hosts
@@ -113,6 +117,11 @@ impl MonitorConfig {
                     anyhow::Result::<_>::Ok(acc)
                 })
                 .context("could not parse association ID")?;
+
+            // if aids.len() < self.targets.len() {
+            //     anyhow::bail!("expected {} aids, got {}", self.targets.len(), aids.len());
+            // }
+            let aids = vec![1];
 
             for (aid, host) in aids.iter().zip(monitor_hosts.iter()) {
                 debug!(

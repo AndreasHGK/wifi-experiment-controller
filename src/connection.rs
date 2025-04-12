@@ -1,4 +1,5 @@
 use openssh::Stdio;
+use tracing::error;
 
 use crate::hosts::Host;
 
@@ -17,9 +18,13 @@ impl Host {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
 
-        let status = command.status().await?;
-        if !status.success() {
-            anyhow::bail!("connecting to Wi-Fi network exited with error code {status}");
+        let out = command.output().await?;
+        if !out.status.success() {
+            error!(host = self.id, "failed to connect to Wi-Fi network");
+            anyhow::bail!(
+                "connecting to Wi-Fi network exited with error code {}",
+                out.status
+            );
         }
         Ok(())
     }

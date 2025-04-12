@@ -7,6 +7,7 @@ use crate::hosts::{Host, HostOs};
 #[derive(Debug, Clone, Copy)]
 pub enum Package {
     Wireshark,
+    Iperf3,
 }
 
 impl Package {
@@ -18,6 +19,7 @@ impl Package {
 
         let pkg = match self {
             Package::Wireshark => "wireshark",
+            Package::Iperf3 => "iperf3",
         };
         Some(pkg)
     }

@@ -16,7 +16,7 @@ pub async fn set_association_id(host: &Host, aid: u16, bssid: &str) -> anyhow::R
         .arg("-c")
         .arg(format!(
             // The AID needs to be a hexidecimal number.
-            "echo {aid:x} {bssid} > /sys/kernel/debug/iwlwifi/*/iwlmvm/he_sniffer_params"
+            "echo {aid:x} {bssid} | tee /sys/kernel/debug/iwlwifi/*/iwlmvm/he_sniffer_params"
         ))
         .status()
         .await

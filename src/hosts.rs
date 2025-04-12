@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Context;
-use openssh::{KnownHosts, Session, SessionBuilder};
+use openssh::{KnownHosts, SessionBuilder};
 use serde::Deserialize;
 use tokio::{fs, task::JoinSet};
 use tracing::{debug, info};

@@ -1,16 +1,13 @@
-pub mod capture;
-pub mod connection;
-pub mod driver;
-pub mod hosts;
-pub mod monitor;
-pub mod package;
-
+use std::path::PathBuf;
+use std::time::SystemTime;
 use std::{process::ExitCode, time::Duration};
 
 use clap::Parser;
-use hosts::HostsConfig;
-use monitor::MonitorConfig;
-use tracing::{debug, error};
+use controller::monitor::MonitorConfig;
+use controller::{hosts::HostsConfig, utils::run_all};
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
 /// Controller program for Wi-Fi experiments and benchmarks.
@@ -61,22 +58,87 @@ async fn main() -> ExitCode {
         }
     };
 
+    let monitors = ["idlab50".to_string()];
+    // let monitors = ["tsn08".to_string(), "idlab50".to_string()];
+    let senders = [
+        "tsn11".to_string(),
+        "idlab51".to_string(),
+        "idlab52".to_string(),
+        "tsn01".to_string(),
+        "tsn02".to_string(),
+        "tsn10".to_string(),
+    ];
+
+    let now = SystemTime::now();
+    let results_folder: PathBuf = format!(
+        "results/{}",
+        // SAFETY: This would only panic if time went backwards.
+        now.duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    )
+    .into();
+
+    tokio::fs::create_dir_all(&results_folder)
+        .await
+        .expect("could not create output folder");
+
     let monitor = MonitorConfig {
         ssid: "OpenWrt".to_string(),
         bssid: "10:7c:61:df:7a:d2".to_string(),
-        monitors: vec![
-            "nuc1".to_string(),
-            "nuc5".to_string(),
-            "nuc6".to_string(),
-            "nuc7".to_string(),
-        ],
-        duration: Duration::from_secs(1),
-        output_path: Some("./results".into()),
-        set_aids: true,
+        monitors: monitors[0..1].to_vec(),
+        targets: senders.to_vec(),
+        duration: Duration::from_secs(15),
+        output_path: Some(results_folder.clone()),
+        set_aids: false,
     }
     .start(&hosts)
     .await
     .expect("failed to start capture");
+
+    let mut start_port = 2550;
+    let iperf_client_num = senders.len();
+    let access_point = hosts.get("ap").unwrap().clone();
+
+    // Start the iperf servers on the access point.
+    tokio::spawn(async move {
+        info!("Starting iperf servers");
+        let mut n = start_port;
+        run_all(vec![&access_point; iperf_client_num], |_| {
+            n += 1;
+            format!("iperf3 -s 192.168.1.1 -p {n} -1")
+        })
+        .await
+        .unwrap();
+    });
+
+    // Run iperf clients on each NUC.
+    info!("Starting iperf clients");
+    let bitrates = [
+        10_000_000, 30_000_000, 20_000_000, 10_000_000, 30_000_000, 20_000_000,
+    ];
+    let mut n = 0;
+    let iperfs = run_all(
+        hosts
+            .get_many(senders.iter().map(|s| s.as_str()))
+            .expect("valid hosts"),
+        |_| {
+            let br = bitrates[0];
+            n += 1;
+            start_port += 1;
+            format!("iperf3 -c 192.168.1.1 -p {start_port} --R -u -b {br}")
+        },
+    )
+    .await
+    .unwrap();
+
+    // Write all the iperf outputs to files.
+    for (num, iperf) in iperfs.into_iter().enumerate() {
+        let mut f = File::create_new(results_folder.join(&format!("{num}.txt")))
+            .await
+            .unwrap();
+        f.write_all(&iperf.stdout).await.unwrap();
+    }
 
     monitor.wait().await.unwrap();
 
