@@ -155,32 +155,44 @@ pub struct Hosts {
 }
 
 impl Hosts {
-    pub fn get_many<'a, 'b>(
-        &'b self,
-        ids: impl IntoIterator<Item = &'a str>,
-    ) -> anyhow::Result<Vec<&'b Arc<Host>>> {
-        ids.into_iter()
-            .map(|host_id| (self.get(host_id), host_id))
-            .try_fold(Vec::new(), |mut acc, (host, id)| {
-                let Some(host) = host else {
-                    anyhow::bail!("unknown host with id `{id}`");
-                };
-                acc.push(host);
-                Ok(acc)
-            })
+    /// Get an iterator over hosts based on the specified identifiers.
+    ///
+    /// If identifiers are not found this function returns an error with the first identifier that
+    /// could not be found.
+    pub fn get_many<I, A>(&self, ids: I) -> Result<impl Iterator<Item = &Arc<Host>> + Clone, A>
+    where
+        I: IntoIterator<Item = A>,
+        I::IntoIter: Clone,
+        A: AsRef<str>,
+    {
+        let iter = ids.into_iter();
+
+        // Make sure all host IDs were able to be found.
+        if let Some(missing) = iter.clone().find(|id| self.get(id.as_ref()).is_none()) {
+            return Err(missing);
+        }
+
+        // SAFETY: We checked before if all IDs map to a host.
+        Ok(iter.map(|id| self.map.get(id.as_ref()).expect("host should exist")))
     }
 
-    pub fn all_except<'a, 'b>(
-        &'b self,
-        excluded_ids: impl IntoIterator<Item = &'a str>,
-    ) -> impl Iterator<Item = &'b Arc<Host>> + 'a
+    /// Return an iterator over all hosts except those specified in `excluded_ids`.
+    ///
+    /// Unknown IDs are ignored.
+    pub fn all_except<I, A>(&self, excluded_ids: I) -> impl Iterator<Item = &Arc<Host>> + Clone
     where
-        'b: 'a,
+        I: IntoIterator<Item = A>,
+        A: AsRef<str>,
     {
-        let set: HashSet<&str> = excluded_ids.into_iter().collect();
+        let set: HashSet<_> = excluded_ids
+            .into_iter()
+            .filter_map(|id| self.get(id))
+            .map(|host| &host.id)
+            .collect();
+
         self.map
             .values()
-            .filter(move |host| !set.contains(&host.id.as_ref()))
+            .filter(move |host| !set.contains(&host.id))
     }
 
     /// Get a host by its identifier.

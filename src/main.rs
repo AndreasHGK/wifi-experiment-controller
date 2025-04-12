@@ -1,6 +1,15 @@
-use std::path::PathBuf;
-use std::time::SystemTime;
-use std::{process::ExitCode, time::Duration};
+pub mod capture;
+pub mod connection;
+pub mod driver;
+pub mod hosts;
+pub mod monitor;
+pub mod package;
+
+use std::{
+    path::PathBuf,
+    process::ExitCode,
+    time::{Duration, SystemTime},
+};
 
 use clap::Parser;
 use controller::monitor::MonitorConfig;
@@ -59,7 +68,6 @@ async fn main() -> ExitCode {
     };
 
     let monitors = ["idlab50".to_string()];
-    // let monitors = ["tsn08".to_string(), "idlab50".to_string()];
     let senders = [
         "tsn11".to_string(),
         "idlab51".to_string(),
@@ -69,11 +77,11 @@ async fn main() -> ExitCode {
         "tsn10".to_string(),
     ];
 
-    let now = SystemTime::now();
     let results_folder: PathBuf = format!(
         "results/{}",
         // SAFETY: This would only panic if time went backwards.
-        now.duration_since(SystemTime::UNIX_EPOCH)
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs()
     )
@@ -90,7 +98,9 @@ async fn main() -> ExitCode {
         targets: senders.to_vec(),
         duration: Duration::from_secs(15),
         output_path: Some(results_folder.clone()),
-        set_aids: false,
+        frequency: 5580,
+        bandwidth: 80,
+        set_aids: true,
     }
     .start(&hosts)
     .await

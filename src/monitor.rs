@@ -1,9 +1,9 @@
 use std::{path::PathBuf, time::Duration};
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use openssh::Stdio;
 use tokio::{fs, io::AsyncReadExt, task::JoinSet};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::{
     capture::{Capture, CaptureConfig, StopCondition},
@@ -16,10 +16,15 @@ pub struct MonitorConfig {
     pub ssid: String,
     /// Thee BSS ID of the network to monitor.
     pub bssid: String,
-    /// The hosts that will perform the monitoring.
+    /// Frequency of the channel in MHz.
+    pub frequency: u32,
+    /// Bandwidth of the channel in MHz.
+    pub bandwidth: u32,
+    /// The identifiers of the hosts that should capture traffic.
     pub monitors: Vec<HostId>,
     /// The hosts to monitor.
     pub targets: Vec<HostId>,
+    /// How long the capture should last.
     pub duration: Duration,
     /// Where to write the captures to.
     pub output_path: Option<PathBuf>,
@@ -40,14 +45,15 @@ impl MonitorConfig {
         }
 
         let monitor_hosts = hosts
-            .get_many(self.monitors.iter().map(|v| v.as_str()))?
-            .into_iter()
+            .get_many(&self.monitors)
+            .map_err(|missing| anyhow!("no host with id `{missing}`"))?
             .cloned()
             .collect::<Vec<_>>();
 
         // Connect the target hosts and determine their association ID.
         let connected_hosts = hosts
-            .get_many(self.targets.iter().map(|v| v.as_str()))?
+            .get_many(self.targets.iter().map(|v| v.as_str()))
+            .map_err(|missing| anyhow!("no host with id `{missing}`"))?
             .into_iter()
             .cloned()
             .collect::<Vec<_>>();
@@ -75,13 +81,15 @@ impl MonitorConfig {
                     // different BSS.
                     "-Y",
                     &format!(
-                        "wlan.fc.type_subtype == 0x0001 && wlan.bssid == {:?}",
+                        "wlan.fc.type_subtype == 0x0001 && wlan.bssid == {}",
                         self.bssid
                     ),
+                    "--autostop",
+                    "duration:10",
                 ])
-                .stderr(Stdio::null())
+                .stdin(Stdio::null())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::null())
+                .stderr(Stdio::inherit())
                 .spawn()
                 .await
                 .context("failed to start AID monitor capture")?;
@@ -106,10 +114,11 @@ impl MonitorConfig {
                 .read_to_string(&mut aids)
                 .await
                 .context("failed to read AID capture output to string")?;
+            _ = aid_capture.disconnect().await;
+            println!("aids: {aids:?}");
 
             let aids = aids
                 .lines()
-                .skip(1)
                 .map(|v| v.strip_prefix("0x").unwrap_or(v))
                 .map(|v| u16::from_str_radix(v, 16))
                 .try_fold(Vec::new(), |mut acc, next| {
@@ -121,7 +130,6 @@ impl MonitorConfig {
             // if aids.len() < self.targets.len() {
             //     anyhow::bail!("expected {} aids, got {}", self.targets.len(), aids.len());
             // }
-            let aids = vec![1];
 
             for (aid, host) in aids.iter().zip(monitor_hosts.iter()) {
                 debug!(
@@ -141,6 +149,53 @@ impl MonitorConfig {
                     }
                 }
             }
+        }
+
+        // Adjust the monitor intefaces to listen on the right frequency + bandwidth.
+        let mut tasks = JoinSet::new();
+        monitor_hosts.iter().cloned().for_each(|h| {
+            tasks.spawn(async move {
+                let res = h
+                    .session
+                    .command("sudo")
+                    .args([
+                        "iw",
+                        "dev",
+                        "mon0",
+                        "set",
+                        "freq",
+                        &format!("{}", self.frequency),
+                        &format!("{}MHz", self.bandwidth),
+                    ])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped())
+                    .output()
+                    .await;
+                match res {
+                    Ok(v) if v.status.success() => Ok(v),
+                    Ok(v) => {
+                        // The command returned with an error.
+                        error!(
+                            host = h.id,
+                            "Setting frequecy on monitor interface failed with status code `{}` and stderr `{}`",
+                            v.status,
+                            String::from_utf8_lossy(&v.stderr),
+                        );
+                        Err(anyhow!("command exited with status code {}", v.status))
+                    }
+                    Err(err) => Err(err).context("command failed"),
+                }
+            });
+        });
+        if let Some(err) = tasks
+            .join_all()
+            .await
+            .into_iter()
+            .filter_map(|result| result.err())
+            .next()
+        {
+            return Err(err)
+                .context("could not change frequency and bandwidth of monitor interface");
         }
 
         // Start the capture on all the monitor hosts.

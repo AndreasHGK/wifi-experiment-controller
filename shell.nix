@@ -10,5 +10,6 @@ pkgs.mkShell {
     rustc
     rustfmt
     rust-analyzer
+    tshark
   ];
 }
