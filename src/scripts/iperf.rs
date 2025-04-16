@@ -1,20 +1,23 @@
 use std::{path::Path, time::Duration};
 
 use anyhow::Context;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use tokio::{fs::File, io::AsyncWriteExt, select, time::sleep};
 use tracing::{debug, error, info, warn};
 
 use crate::{hosts::Hosts, monitor::MonitorConfig, utils::run_all};
 
 #[derive(Parser, Debug, Clone)]
-pub struct DowlinkArgs {
+pub struct IperfArgs {
     /// The host id of the wireless access point.
     #[clap(long = "ap")]
     pub access_point: String,
     /// The host id(s) of the hosts that will capture the wireless traffic.
     #[clap(long, required = true)]
     pub monitors: Vec<String>,
+    /// In which direction to perform the IPerf tests.
+    #[clap(short = 'D', long, default_value = "downlink")]
+    pub direction: Direction,
     /// How the capture should last in seconds.
     #[clap(short = 'd', long, default_value = "10")]
     pub duration: u64,
@@ -34,12 +37,19 @@ pub struct DowlinkArgs {
     /// Configure the MCS.
     ///
     /// Follows the format of `iw dev <if> set bitrates <mcs...>`. For example: `he-mcs-5 1:11`.
-    /// Leave empty to use automatic MCS.
+    /// Set tp auto to use automatic MCS. Not providing a value will not set anything.
     #[clap(long)]
     pub mcs: Option<String>,
 }
 
-pub async fn run(args: DowlinkArgs, hosts: Hosts, out_path: &Path) -> anyhow::Result<()> {
+#[derive(ValueEnum, Debug, Clone, Copy)]
+pub enum Direction {
+    Uplink,
+    Downlink,
+    Bidir,
+}
+
+pub async fn run(args: IperfArgs, hosts: Hosts, out_path: &Path) -> anyhow::Result<()> {
     let total_bandwidth = args.total_bandwidth;
     let udp = args.udp.unwrap_or(true);
 
@@ -49,7 +59,7 @@ pub async fn run(args: DowlinkArgs, hosts: Hosts, out_path: &Path) -> anyhow::Re
         .collect();
 
     let access_point = hosts
-        .get(args.access_point)
+        .get(&args.access_point)
         .context("access point id not found")?
         .clone();
 
@@ -62,36 +72,43 @@ pub async fn run(args: DowlinkArgs, hosts: Hosts, out_path: &Path) -> anyhow::Re
         .expect("could not create output folder");
 
     // Configure the MCS on the access point.
-    let output = access_point
-        .session
-        .shell(format!(
-            "iw dev phy1-ap0 set bitrates {}",
-            args.mcs.as_ref().map(|v| v.as_str()).unwrap_or("")
-        ))
-        .output()
-        .await
-        .context("failed to set MCS")?;
+    if let Some(mcs) = args.mcs {
+        debug!("Setting MCS");
+        let output = access_point
+            .session
+            .shell(format!(
+                "iw dev phy1-ap0 set bitrates {}",
+                if &mcs.to_lowercase() == "auto" {
+                    ""
+                } else {
+                    &mcs
+                }
+            ))
+            .output()
+            .await
+            .context("failed to set MCS")?;
 
-    if !output.status.success() {
-        debug!(
-            stdout = %String::from_utf8_lossy(&output.stdout),
-            stderr = %String::from_utf8_lossy(&output.stderr),
-            "Failed to set MCS"
-        );
-        anyhow::bail!("setting MCS exited with error code {}", output.status);
+        if !output.status.success() {
+            debug!(
+                stdout = %String::from_utf8_lossy(&output.stdout),
+                stderr = %String::from_utf8_lossy(&output.stderr),
+                "Failed to set MCS"
+            );
+            anyhow::bail!("setting MCS exited with error code {}", output.status);
+        }
     }
 
     // Configure and start the monitoring.
     let monitor = MonitorConfig {
-        ssid: "OpenWrt".to_string(),
-        bssid: "10:7c:61:df:7a:d2".to_string(),
+        ssid: "Adriaan".to_string(),
+        bssid: "6a:eb:b6:ad:10:bf".to_string(),
         monitors: args.monitors.clone(),
         targets: senders.iter().map(|v| v.id.clone()).collect(),
         // Give some extra leeway to ensure the monitor captures everything.
         duration: Duration::from_secs(args.duration + 4),
         output_path: Some(out_path.to_owned()),
         // TODO: how can this be automated in OpenWRT?
-        frequency: 5580,
+        frequency: 5240,
         bandwidth: 80,
         set_aids: true,
     }
@@ -132,7 +149,7 @@ pub async fn run(args: DowlinkArgs, hosts: Hosts, out_path: &Path) -> anyhow::Re
 
         start_port += 1;
         let s = format!(
-            "iperf3 -c {access_point_ip} -p {start_port} {0} -R -b {1} {2}",
+            "iperf3 -c {access_point_ip} -p {start_port} {0} -b {1} {2} {3}",
             // 0 - Bind address
             h.extra_data
                 .interface
@@ -142,7 +159,13 @@ pub async fn run(args: DowlinkArgs, hosts: Hosts, out_path: &Path) -> anyhow::Re
             // 1 - Bandwidth
             total_bandwidth / senders.len() as u64,
             // 2 - Use UDP or not
-            if udp { "-u" } else { "" }
+            if udp { "-u" } else { "" },
+            // 3 - Which direction to test
+            match args.direction {
+                Direction::Uplink => "",
+                Direction::Downlink => "-R",
+                Direction::Bidir => "--bidir",
+            },
         );
         ip_num += 1;
         s
@@ -171,13 +194,19 @@ pub async fn run(args: DowlinkArgs, hosts: Hosts, out_path: &Path) -> anyhow::Re
     }
 
     info!("Waiting for capture to finish");
-    monitor.wait().await.unwrap();
+    monitor.wait().await.expect("monitor task crashed");
 
     debug!("Waiting for AP to finish");
     select! {
         _ = tokio::time::sleep(Duration::from_secs(1)) => {
             // Close the remaining iperf sessions.
-            _ = hosts.get("ap").unwrap().session.shell("killall iperf3").output().await;
+            _ = hosts
+                .get(&args.access_point)
+                .expect("access point was used earlier")
+                .session
+                .shell("killall iperf3")
+                .output()
+                .await;
 
             anyhow::bail!("AP iperf servers did not close correctly; remaining sessions killed");
         },

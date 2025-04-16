@@ -4,15 +4,16 @@ use clap::Parser;
 
 use crate::hosts::Hosts;
 
-pub mod downlink;
+pub mod iperf;
 
 #[derive(Parser, Debug, Clone)]
 pub enum Script {
-    Downlink(downlink::DowlinkArgs),
+    /// Run an IPerf stress test with multiple nodes.
+    Iperf(iperf::IperfArgs),
 }
 
 pub async fn run(args: Script, hosts: Hosts, out_path: &Path) -> anyhow::Result<()> {
     match args {
-        Script::Downlink(args) => downlink::run(args, hosts, out_path).await,
+        Script::Iperf(args) => iperf::run(args, hosts, out_path).await,
     }
 }
