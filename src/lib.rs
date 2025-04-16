@@ -4,4 +4,5 @@ pub mod driver;
 pub mod hosts;
 pub mod monitor;
 pub mod package;
+pub mod scripts;
 pub mod utils;

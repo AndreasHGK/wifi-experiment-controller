@@ -9,7 +9,7 @@ use crate::hosts::Host;
 pub async fn run_all<F>(
     hosts: impl IntoIterator<Item = &Arc<Host>>,
     mut func: F,
-) -> anyhow::Result<Vec<Output>>
+) -> anyhow::Result<Vec<(Arc<Host>, Output)>>
 where
     F: FnMut(&Arc<Host>) -> String,
 {
@@ -24,7 +24,7 @@ where
     let mut out = Vec::new();
     for (host, result) in commands.join_all().await {
         let result = match result {
-            Ok(v) => v,
+            Ok(v) => (host, v),
             Err(err) => {
                 error!(host = host.id, "running command failed: {err}");
                 return Err(err).context("failed to run command");

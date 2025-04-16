@@ -64,7 +64,7 @@ impl MonitorConfig {
                 .context("monitoring requires at least one monitor host")?;
             debug!(host = h.id, "Listening for AIDs");
 
-            // Set up the actual capture that will find the association ids.
+            // Set up the actual capture that will find te association ids.
             let mut aid_capture = h
                 .session
                 .command("sudo")
@@ -115,8 +115,8 @@ impl MonitorConfig {
                 .await
                 .context("failed to read AID capture output to string")?;
             _ = aid_capture.disconnect().await;
-            println!("aids: {aids:?}");
 
+            // Parse the tshark output into the individual AIDs.
             let aids = aids
                 .lines()
                 .map(|v| v.strip_prefix("0x").unwrap_or(v))
@@ -127,16 +127,23 @@ impl MonitorConfig {
                 })
                 .context("could not parse association ID")?;
 
-            // if aids.len() < self.targets.len() {
-            //     anyhow::bail!("expected {} aids, got {}", self.targets.len(), aids.len());
-            // }
+            debug!("Got {} aids: {:?}", aids.len(), aids);
+
+            // Each monitor should ideally have a different AID to sniff different traffic.
+            if aids.len() < self.monitors.len() {
+                anyhow::bail!(
+                    "expected at least {} aids, got {}",
+                    self.monitors.len(),
+                    aids.len()
+                );
+            }
 
             for (aid, host) in aids.iter().zip(monitor_hosts.iter()) {
                 debug!(
                     host = host.id,
                     aid, "Changing association ID on monitor host"
                 );
-                match host.wifi_driver.as_ref().map(|s| s.as_str()) {
+                match host.extra_data.wifi_driver.as_ref().map(|s| s.as_str()) {
                     Some("iwlwifi") => iwlwifi::set_association_id(&host, *aid, &self.bssid)
                         .await
                         .context("failed to set AID")?,

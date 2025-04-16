@@ -5,22 +5,16 @@ pub mod hosts;
 pub mod monitor;
 pub mod package;
 
-use std::{
-    path::PathBuf,
-    process::ExitCode,
-    time::{Duration, SystemTime},
-};
+use std::{path::PathBuf, process::ExitCode, time::SystemTime};
 
 use clap::Parser;
-use controller::monitor::MonitorConfig;
-use controller::{hosts::HostsConfig, utils::run_all};
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
-use tracing::{debug, error, info};
+use controller::scripts::Script;
+use controller::{hosts::HostsConfig, scripts};
+use tracing::{debug, error};
 use tracing_subscriber::EnvFilter;
 
 /// Controller program for Wi-Fi experiments and benchmarks.
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(about)]
 struct Args {
     /// Sets the logging verbosity.
@@ -32,6 +26,14 @@ struct Args {
     /// Hosts configuration file path.
     #[clap(short = 'H', long, value_parser, default_value = "./hosts.toml")]
     hosts_file: String,
+    /// The path to write output to to.
+    ///
+    /// The `<timestamp>` placeholder can be used to fill in the current timestamp in seconds.
+    #[clap(short = 'O', long = "out", default_value = "results/<timestamp>")]
+    output_path: String,
+    /// The specific script to run.
+    #[command(subcommand)]
+    script: Script,
 }
 
 #[tokio::main]
@@ -67,90 +69,19 @@ async fn main() -> ExitCode {
         }
     };
 
-    let monitors = ["idlab50".to_string()];
-    let senders = [
-        "tsn11".to_string(),
-        "idlab51".to_string(),
-        "idlab52".to_string(),
-        "tsn01".to_string(),
-        "tsn02".to_string(),
-        "tsn10".to_string(),
-    ];
-
-    let results_folder: PathBuf = format!(
-        "results/{}",
-        // SAFETY: This would only panic if time went backwards.
-        SystemTime::now()
+    let out_path: PathBuf = {
+        let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs()
-    )
-    .into();
+            .to_string();
+        args.output_path.replace("<timestamp>", &now).into()
+    };
 
-    tokio::fs::create_dir_all(&results_folder)
-        .await
-        .expect("could not create output folder");
-
-    let monitor = MonitorConfig {
-        ssid: "OpenWrt".to_string(),
-        bssid: "10:7c:61:df:7a:d2".to_string(),
-        monitors: monitors[0..1].to_vec(),
-        targets: senders.to_vec(),
-        duration: Duration::from_secs(15),
-        output_path: Some(results_folder.clone()),
-        frequency: 5580,
-        bandwidth: 80,
-        set_aids: true,
+    if let Err(err) = scripts::run(args.script, hosts, &out_path).await {
+        error!("Script exited with an error: {err:?}");
+        return ExitCode::FAILURE;
     }
-    .start(&hosts)
-    .await
-    .expect("failed to start capture");
-
-    let mut start_port = 2550;
-    let iperf_client_num = senders.len();
-    let access_point = hosts.get("ap").unwrap().clone();
-
-    // Start the iperf servers on the access point.
-    tokio::spawn(async move {
-        info!("Starting iperf servers");
-        let mut n = start_port;
-        run_all(vec![&access_point; iperf_client_num], |_| {
-            n += 1;
-            format!("iperf3 -s 192.168.1.1 -p {n} -1")
-        })
-        .await
-        .unwrap();
-    });
-
-    // Run iperf clients on each NUC.
-    info!("Starting iperf clients");
-    let bitrates = [
-        10_000_000, 30_000_000, 20_000_000, 10_000_000, 30_000_000, 20_000_000,
-    ];
-    let mut n = 0;
-    let iperfs = run_all(
-        hosts
-            .get_many(senders.iter().map(|s| s.as_str()))
-            .expect("valid hosts"),
-        |_| {
-            let br = bitrates[0];
-            n += 1;
-            start_port += 1;
-            format!("iperf3 -c 192.168.1.1 -p {start_port} --R -u -b {br}")
-        },
-    )
-    .await
-    .unwrap();
-
-    // Write all the iperf outputs to files.
-    for (num, iperf) in iperfs.into_iter().enumerate() {
-        let mut f = File::create_new(results_folder.join(&format!("{num}.txt")))
-            .await
-            .unwrap();
-        f.write_all(&iperf.stdout).await.unwrap();
-    }
-
-    monitor.wait().await.unwrap();
 
     ExitCode::SUCCESS
 }

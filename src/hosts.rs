@@ -36,11 +36,19 @@ pub struct HostConfig {
     /// that will be connected to.
     #[serde(default)]
     pub relays: Vec<String>,
+    /// Extra fields included in hosts.
+    #[serde(flatten)]
+    pub extra_data: ExtraData,
+}
+
+/// Extra data used in scripts.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub struct ExtraData {
     /// The wireless driver used for the Wi-Fi interface in the device.
     pub wifi_driver: Option<String>,
-    /// If true, exclude this host for monitoring.
-    #[serde(default)]
-    pub exclude_monitor: bool,
+    /// The IP address of the main wireless interface on this machine.
+    pub interface: Option<String>,
 }
 
 impl HostsConfig {
@@ -140,8 +148,7 @@ impl HostConfig {
             id: self.id.clone(),
             session,
             os_info,
-            wifi_driver: self.wifi_driver.clone(),
-            do_monitor: !self.exclude_monitor,
+            extra_data: self.extra_data.clone(),
         })
     }
 }
@@ -214,10 +221,7 @@ pub struct Host {
     /// An SSH session to the remote host.
     pub session: openssh::Session,
     pub os_info: HostOs,
-    /// The driver user in the main Wi-Fi interface for the device.
-    pub wifi_driver: Option<String>,
-    /// If false, this host should not be monitored.
-    pub do_monitor: bool,
+    pub extra_data: ExtraData,
 }
 
 /// Information about the host's operating system. Can be useful to known for instance which package
