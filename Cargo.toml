@@ -7,6 +7,7 @@ edition = "2021"
 anyhow = "1.0.97"
 clap = { version = "4.5.31", features = ["derive", "env"] }
 openssh = { version = "0.11.5", features = ["tracing"] }
+ron = "0.10.1"
 serde = { version = "1.0.219", features = ["derive"] }
 tokio = { version = "1.44.0", features = ["full"] }
 toml = "0.8.20"

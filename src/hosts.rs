@@ -47,7 +47,7 @@ pub struct HostConfig {
 pub struct ExtraData {
     /// The wireless driver used for the Wi-Fi interface in the device.
     pub wifi_driver: Option<String>,
-    /// The IP address of the main wireless interface on this machine.
+    /// The name of the main wireless interface on this machine.
     pub interface: Option<String>,
 }
 
