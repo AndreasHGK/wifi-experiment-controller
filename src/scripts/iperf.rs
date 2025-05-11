@@ -97,7 +97,7 @@ pub async fn run(args: IperfArgs, hosts: Hosts, out_path: &Path) -> anyhow::Resu
         let output = access_point
             .session
             .shell(format!(
-                "ip -4 a l {} | awk '/inet/ {{print $2}}' | cut -d/ -f1",
+                "ip -4 a show {} | awk '/inet/ {{print $2}}' | cut -d/ -f1",
                 access_point_ifname
             ))
             .output()
